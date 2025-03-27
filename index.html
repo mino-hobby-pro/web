@@ -2,93 +2,154 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>mino Intro</title>
+  <title>mino's Intro</title>
   <style>
-    body {
+    html, body {
       margin: 0;
-      background: #000010;
+      padding: 0;
+      background-color: #000;
       overflow: hidden;
+      height: 100%;
+      font-family: 'Courier New', monospace;
+      color: #fff;
     }
     canvas {
       display: block;
     }
+    /* 物語テキストのスタイル */
+    #story {
+      position: absolute;
+      top: 40%;
+      width: 100%;
+      text-align: center;
+      font-size: 2em;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 1s ease;
+    }
+    /* スタートボタン */
+    #startButton {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 2em;
+      padding: 0.5em 1em;
+      border: none;
+      background: #222;
+      color: #fff;
+      cursor: pointer;
+      border-radius: 5px;
+    }
   </style>
 </head>
 <body>
-  <!-- Three.js ライブラリ -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <!-- フォントローダーとテキストジオメトリのサンプル（CDN経由） -->
-  <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
-  <script src="https://threejs.org/examples/js/loaders/FontLoader.js"></script>
-  <script src="https://threejs.org/examples/js/geometries/TextGeometry.js"></script>
+  <canvas id="introCanvas"></canvas>
+  <div id="story"></div>
+  <button id="startButton">Start Intro</button>
+  <!-- 音楽ファイル（自前のURLに置き換えてください） -->
+  <audio id="bgMusic" src="YOUR_MUSIC_URL.mp3"></audio>
 
   <script>
-    // シーン、カメラ、レンダラーの初期化
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000010);
+    // キャンバス設定
+    const canvas = document.getElementById('introCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-    const camera = new THREE.PerspectiveCamera(
-      75, 
-      window.innerWidth / window.innerHeight, 
-      0.1, 
-      1000
-    );
-    camera.position.z = 50;
+    // ストーリーテキストの更新領域
+    const storyDiv = document.getElementById('story');
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+    // スタートボタン
+    const startButton = document.getElementById('startButton');
+    const bgMusic = document.getElementById('bgMusic');
 
-    // ライティングの設定
-    const ambientLight = new THREE.AmbientLight(0x404040, 2);
-    scene.add(ambientLight);
+    // ストーリーテキストのタイムライン（秒単位）
+    const storySteps = [
+      { time: 0,    text: "デジタルの闇を裂き、コードが光を生む…" },
+      { time: 3,    text: "静寂の中から、ひとりのエンジニアが現れる…" },
+      { time: 6,    text: "MINO — 未来を築く革新者。" },
+      { time: 9,    text: "情熱、創造、そして無限の可能性…" },
+      { time: 12,   text: "彼の手に、世界は新たな息吹を得る。" }
+    ];
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-    directionalLight.position.set(0, 1, 1);
-    scene.add(directionalLight);
+    let animationStart = null;
 
-    // フォントをロードして「mino」テキストの3Dジオメトリ作成
-    const fontLoader = new THREE.FontLoader();
-    fontLoader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function(font) {
-      const textGeometry = new THREE.TextGeometry('mino', {
-        font: font,
-        size: 10,
-        height: 2,
-        curveSegments: 12,
-        bevelEnabled: true,
-        bevelThickness: 0.5,
-        bevelSize: 0.3,
-        bevelOffset: 0,
-        bevelSegments: 5
-      });
+    // メインアニメーションループ
+    function animate(timestamp) {
+      if (!animationStart) animationStart = timestamp;
+      const elapsed = (timestamp - animationStart) / 1000; // 経過秒数
 
-      // テキストをシーンの中央に配置するためにジオメトリを中心化
-      textGeometry.center();
+      // 背景の微妙なフェード効果
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // マテリアルの設定（シャイニーな感じでエンジニアらしさを表現）
-      const textMaterial = new THREE.MeshPhongMaterial({
-        color: 0x00ff00,
-        shininess: 100
-      });
+      // 中央に pulsating なサークル
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const maxRadius = Math.min(canvas.width, canvas.height) / 4;
+      // elapsed に合わせた呼吸アニメーション
+      const baseRadius = maxRadius * 0.5;
+      const oscillation = Math.sin(elapsed * 2) * 30;
+      const radius = baseRadius + oscillation;
 
-      const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-      scene.add(textMesh);
+      // 放射グラデーションを用いたグロー
+      const gradient = ctx.createRadialGradient(centerX, centerY, radius * 0.1, centerX, centerY, radius);
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+      gradient.addColorStop(1, 'rgba(0, 0, 255, 0)');
 
-      // アニメーションループ
-      function animate() {
-        requestAnimationFrame(animate);
-        textMesh.rotation.y += 0.01;
-        textMesh.rotation.x += 0.005;
-        renderer.render(scene, camera);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      // mino の名前をフェードインして中央に表示
+      if (elapsed > 5) {
+        const alpha = Math.min((elapsed - 5) / 3, 1);
+        ctx.font = "bold 60px Courier New";
+        ctx.textAlign = "center";
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.fillText("MINO", centerX, centerY + 20);
       }
-      animate();
+
+      // ストーリーテキストの更新（div 用）
+      updateStory(elapsed);
+
+      requestAnimationFrame(animate);
+    }
+
+    // ストーリーテキストの更新関数
+    function updateStory(elapsed) {
+      // ステップごとにテキストを表示（区切り合わせ、フェードイン演出）
+      let currentText = "";
+      for (let i = storySteps.length - 1; i >= 0; i--) {
+        if (elapsed >= storySteps[i].time) {
+          currentText = storySteps[i].text;
+          break;
+        }
+      }
+      // ふわっと表示: 5秒から表示開始、テキスト表示時間はゆっくりフェードイン
+      if (elapsed >= 1) {
+        storyDiv.style.opacity = 1;
+      }
+      storyDiv.innerText = currentText;
+    }
+
+    // ボタンが押されたらイントロ開始
+    startButton.addEventListener('click', function() {
+      // 音楽再生（注意：自動再生の制御は各ブラウザによる）
+      bgMusic.play().catch(e => {
+        console.log("音楽再生エラー:", e);
+      });
+      startButton.style.display = 'none';
+      animationStart = null; // 経過時間リセット
+      requestAnimationFrame(animate);
     });
 
-    // 画面リサイズへの対応
+    // 画面サイズのリサイズ対応
     window.addEventListener('resize', function() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
     });
   </script>
 </body>
