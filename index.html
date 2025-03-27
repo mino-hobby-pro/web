@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>3D Shooter vs CPU - Maze & Open Field Plus</title>
+  <title>3D Shooter vs CPU - Maze & Open Field</title>
   <style>
     body { margin: 0; overflow: hidden; }
     /* タイトルオーバーレイ */
@@ -51,9 +51,11 @@
   <div id="overlay">
     <h1>3D Shooter vs CPU</h1>
     <p>【操作方法】</p>
-    <p>W　：前進　S　：後退</p>
-    <p>A　：左回転　D　：右回転</p>
-    <p>マウス照準＋Space：射撃（無制限・即発射）</p>
+    <p>W　：前進</p>
+    <p>S　：後退</p>
+    <p>A　：左回転</p>
+    <p>D　：右回転</p>
+    <p>マウスで照準を合わせ、Space：射撃</p>
     <p>Enter：ゲーム開始</p>
   </div>
   <!-- ゲームオーバー表示 -->
@@ -64,27 +66,28 @@
   <!-- ミニマップ用キャンバス -->
   <canvas id="minimap" width="300" height="300"></canvas>
 
-  <!-- Three.js CDN (r128) -->
+  <!-- Three.js CDN （r128） -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script>
     /***********************
      * グローバル変数・定数
      ***********************/
     let scene, camera, renderer, clock;
-    let floorMesh; // 地面（レイキャスター対象）
-    let obstacles = []; // 平原内の障害物＋迷路の壁
-    let bullets = [];   // プレイヤー弾
-    let enemyBullets = []; // 敵の弾
-    let enemies = [];   // 複数のCPU（敵）
+    let floorMesh;  // 地面（射撃の交点を求める対象）
+    let obstacles = [];  // ランダム障害物＋迷路の壁
+    let bullets = [];  // プレイヤーの弾
+    let enemyBullets = [];  // 敵の弾
     let lastShootTime = 0;
-    // リロード待ちは 0（無制限・即発射）
-    const shootCooldown = 0;
-    const terrainSize = 500; // 平原全体のサイズ
+    const shootCooldown = 0.3;
+    let enemyShootTimer = 0;
+    let playerAlive = true, enemyAlive = true;
+    let enemy;  // CPU（敵）オブジェクト
+    const terrainSize = 500;  // 平原全体のサイズ
     // ミニマップ
     let minimap, minimapCtx;
     // キー状態
     let keys = {};
-    // マウス位置（正規化デバイス座標）
+    // マウス座標（正規化デバイス座標）
     let mouse = new THREE.Vector2();
 
     /***********************
@@ -93,7 +96,7 @@
     function init() {
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 2000);
-      // プレイヤーは平原の左下付近に配置
+      // プレイヤーを平原の左下付近に配置
       camera.position.set(-terrainSize/2 + 25, 5, -terrainSize/2 + 25);
       
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -102,7 +105,7 @@
       
       clock = new THREE.Clock();
 
-      // ミニマップキャンバスの取得
+      // ミニマップ用キャンバス取得
       minimap = document.getElementById('minimap');
       minimapCtx = minimap.getContext('2d');
 
@@ -123,11 +126,11 @@
       // オープンフィールドの障害物生成
       createObstacles();
 
-      // 迷路エリア生成（たとえば、平原の左上領域に幅250×深さ250の迷路）
+      // 平原の一部分に迷路エリアを生成（例：左上領域）
       createMazeArea();
 
-      // CPU（敵）の生成（複数配置）
-      createEnemies(5); // ここでは 5体、必要に応じて数を変更
+      // CPU（敵）の生成（巡回ルートを大きめに設定）
+      createEnemy();
 
       // 各種イベントリスナー登録
       window.addEventListener('keydown', onKeyDown);
@@ -155,8 +158,8 @@
         obstacle.userData.depth = depth;
         // 障害物は平原内（境界から余裕を持って配置）
         const margin = 50;
-        obstacle.position.x = Math.random() * (terrainSize - 2 * margin) - (terrainSize / 2 - margin);
-        obstacle.position.z = Math.random() * (terrainSize - 2 * margin) - (terrainSize / 2 - margin);
+        obstacle.position.x = Math.random() * (terrainSize - 2*margin) - (terrainSize/2 - margin);
+        obstacle.position.z = Math.random() * (terrainSize - 2*margin) - (terrainSize/2 - margin);
         obstacle.position.y = height / 2;
         obstacles.push(obstacle);
         scene.add(obstacle);
@@ -165,33 +168,30 @@
 
     /***********************
      * 迷路エリア生成
-     *  平原の左上領域 (x: -terrainSize/2 ～ 0, z: 0 ～ terrainSize/2) に幅250×深さ250の迷路を作成
-     *  ここで、下端中央（mazeGrid[rows-1][Math.floor(cols/2)]）を必ず通路（入口）にします。
+     *  例：平原の左上領域（x: -terrainSize/2～0, z: 0～terrainSize/2）に幅 250, 深さ 250 の迷路を作成
      ***********************/
     function createMazeArea() {
       const mazeRegionWidth = terrainSize / 2;  // 250
       const mazeRegionDepth = terrainSize / 2;    // 250
-      // 迷路を配置する領域の左上オフセット
-      const mazeOffsetX = -terrainSize / 2;
-      const mazeOffsetZ = 0;
+      const mazeOffsetX = -terrainSize / 2;         // -250
+      const mazeOffsetZ = 0;                        // 0
       const cellSize = 10;
       const cols = Math.floor(mazeRegionWidth / cellSize); // 25
-      const rows = Math.floor(mazeRegionDepth / cellSize);   // 25
+      const rows = Math.floor(mazeRegionDepth / cellSize); // 25
 
+      // 迷路グリッド生成（再帰的バックトラッキング）
       let mazeGrid = generateMazeGrid(cols, rows);
-      // 迷路下端中央に「入口」を作成
-      mazeGrid[rows - 1][Math.floor(cols / 2)] = 0;
 
-      // グリッドに従い壁（セル値 1 の部分）を配置
+      // 迷路グリッドに従い、壁を配置（グリッド値 1 のセルに壁を生成）
       for (let j = 0; j < rows; j++) {
         for (let i = 0; i < cols; i++) {
           if (mazeGrid[j][i] === 1) {
             const geometry = new THREE.BoxGeometry(cellSize, 10, cellSize);
             const material = new THREE.MeshPhongMaterial({ color: 0x333333 });
             let wall = new THREE.Mesh(geometry, material);
-            wall.position.x = mazeOffsetX + i * cellSize + cellSize / 2;
+            wall.position.x = mazeOffsetX + i * cellSize + cellSize/2;
             wall.position.y = 5;
-            wall.position.z = mazeOffsetZ + j * cellSize + cellSize / 2;
+            wall.position.z = mazeOffsetZ + j * cellSize + cellSize/2;
             wall.userData.width = cellSize;
             wall.userData.depth = cellSize;
             obstacles.push(wall);
@@ -205,7 +205,7 @@
      * 迷路グリッド生成（再帰的バックトラッキング）
      ***********************/
     function generateMazeGrid(cols, rows) {
-      // すべてのセルを1（壁）で初期化
+      // すべてのセルを壁（1）で初期化
       let grid = [];
       for (let y = 0; y < rows; y++) {
         grid[y] = [];
@@ -213,41 +213,56 @@
           grid[y][x] = 1;
         }
       }
-      // 配列シャッフル
+      // 配列シャッフル用
       function shuffle(array) {
         for (let i = array.length - 1; i > 0; i--) {
           let j = Math.floor(Math.random() * (i + 1));
           [array[i], array[j]] = [array[j], array[i]];
         }
       }
-      // 再帰的に通路を掘る関数
+      // 再帰的に通路を掘る
       function carve(x, y) {
         grid[y][x] = 0;
         let directions = [[2,0], [-2,0], [0,2], [0,-2]];
         shuffle(directions);
         for (let d of directions) {
-          let nx = x + d[0], ny = y + d[1];
+          let nx = x + d[0];
+          let ny = y + d[1];
           if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
             if (grid[ny][nx] === 1) {
-              grid[y + d[1] / 2][x + d[0] / 2] = 0;
+              grid[y + d[1]/2][x + d[0]/2] = 0;
               carve(nx, ny);
             }
           }
         }
       }
-      carve(1,1);
+      carve(1, 1);
       return grid;
     }
 
     /***********************
-     * CPU（敵）生成
-     *  複数（引数 count で指定）作成し、各自大きな巡回ルートを持たせる
+     * CPU（敵）の生成
+     * 　巡回ルートを拡大して、平原内の広いエリアを巡回
      ***********************/
-    function createEnemies(count) {
-      // 共通の巡回ルート（8点ルート）
-      const patrolPoints = [
+    function createEnemy() {
+      enemy = new THREE.Group();
+      // ボディ
+      const bodyGeo = new THREE.BoxGeometry(1.5, 3, 1);
+      const bodyMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+      const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+      bodyMesh.position.y = 1.5;
+      // ヘッド
+      const headGeo = new THREE.SphereGeometry(0.75, 16, 16);
+      const headMat = new THREE.MeshPhongMaterial({ color: 0xff8888 });
+      const headMesh = new THREE.Mesh(headGeo, headMat);
+      headMesh.position.y = 3.0;
+      enemy.add(bodyMesh);
+      enemy.add(headMesh);
+      enemy.userData.velocity = new THREE.Vector3(0, 0, 0);
+      // 巡回ルート：平原全体を大きく巡回する 8 点ルート
+      enemy.userData.patrolPoints = [
         new THREE.Vector3( terrainSize/2 - 10, 0, terrainSize/2 - 10),
-        new THREE.Vector3( terrainSize/2 - 10, 0, terrainSize/2/2),
+        new THREE.Vector3( terrainSize/2 - 10, 0, 0),
         new THREE.Vector3( terrainSize/2 - 10, 0, -terrainSize/2 + 10),
         new THREE.Vector3( 0, 0, -terrainSize/2 + 10),
         new THREE.Vector3( -terrainSize/2 + 10, 0, -terrainSize/2 + 10),
@@ -255,30 +270,11 @@
         new THREE.Vector3( -terrainSize/2 + 10, 0, terrainSize/2 - 10),
         new THREE.Vector3( 0, 0, terrainSize/2 - 10)
       ];
-      for (let i = 0; i < count; i++) {
-        let enemy = new THREE.Group();
-        // ボディ
-        const bodyGeo = new THREE.BoxGeometry(1.5, 3, 1);
-        const bodyMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
-        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-        bodyMesh.position.y = 1.5;
-        // ヘッド
-        const headGeo = new THREE.SphereGeometry(0.75, 16, 16);
-        const headMat = new THREE.MeshPhongMaterial({ color: 0xff8888 });
-        const headMesh = new THREE.Mesh(headGeo, headMat);
-        headMesh.position.y = 3.0;
-        enemy.add(bodyMesh);
-        enemy.add(headMesh);
-        enemy.userData.velocity = new THREE.Vector3(0,0,0);
-        enemy.userData.patrolPoints = patrolPoints;
-        // ランダムな巡回開始位置
-        enemy.userData.patrolIndex = Math.floor(Math.random() * patrolPoints.length);
-        enemy.position.copy(enemy.userData.patrolPoints[ enemy.userData.patrolIndex ]);
-        enemy.userData.state = "patrol";  // "patrol" または "chase"
-        enemy.userData.shootTimer = 0;
-        enemies.push(enemy);
-        scene.add(enemy);
-      }
+      enemy.userData.patrolIndex = 0;
+      enemy.userData.state = "patrol";  // "patrol" or "chase"
+      // 初期配置は最初の巡回点
+      enemy.position.copy(enemy.userData.patrolPoints[0]);
+      scene.add(enemy);
     }
 
     /***********************
@@ -314,14 +310,14 @@
     }
     
     /***********************
-     * プレイヤー弾生成（マウス照準方向へ）
+     * プレイヤー弾の生成（マウス照準方向へ発射）
      ***********************/
     function shootBullet() {
       const bulletGeo = new THREE.SphereGeometry(0.3, 8, 8);
       const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
       let bullet = new THREE.Mesh(bulletGeo, bulletMat);
       bullet.position.copy(camera.position);
-      // マウス位置からレイキャスターで地面との交点を求める
+      // マウス位置からレイキャスターを利用して地面との交点を求める
       let raycaster = new THREE.Raycaster();
       raycaster.setFromCamera(mouse, camera);
       let intersects = raycaster.intersectObject(floorMesh);
@@ -336,7 +332,7 @@
 
     /***********************
      * 衝突判定
-     *  平原境界および obstacles 配列に登録されたオブジェクトとの簡易 AABB 判定
+     * 　平原の境界および obstacles 配列（ランダム障害物＋迷路の壁）をチェック
      ***********************/
     function isColliding(pos, radius) {
       let half = terrainSize / 2;
@@ -358,7 +354,7 @@
      * 弾の更新処理（プレイヤー弾・敵弾）
      ***********************/
     function updateBullets(delta) {
-      // プレイヤー弾
+      // プレイヤー弾の更新
       for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
@@ -372,20 +368,16 @@
           bullets.splice(i, 1);
           continue;
         }
-        // 各敵との衝突判定（距離2未満ならヒット）
-        for (let j = enemies.length - 1; j >= 0; j--) {
-          let enemy = enemies[j];
-          if (b.position.distanceTo(enemy.position) < 2) {
-            // 敵を除去
-            scene.remove(enemy);
-            enemies.splice(j, 1);
-            scene.remove(b);
-            bullets.splice(i, 1);
-            break;
-          }
+        // 敵に当たったか（距離 2 未満）
+        if (enemyAlive && b.position.distanceTo(enemy.position) < 2) {
+          enemyAlive = false;
+          scene.remove(enemy);
+          scene.remove(b);
+          bullets.splice(i, 1);
+          break;
         }
       }
-      // 敵弾
+      // 敵弾の更新
       for (let i = enemyBullets.length - 1; i >= 0; i--) {
         let b = enemyBullets[i];
         b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
@@ -407,101 +399,6 @@
           break;
         }
       }
-    }
-
-    /***********************
-     * 敵（CPU）更新処理（複数）
-     ***********************/
-    function updateEnemies(delta) {
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        let enemy = enemies[i];
-        // プレイヤーとの水平距離
-        let distanceToPlayer = camera.position.clone().sub(enemy.position).length();
-        const chaseDistance = 80;
-        if (distanceToPlayer < chaseDistance) {
-          enemy.userData.state = "chase";
-        } else {
-          enemy.userData.state = "patrol";
-        }
-        // 目標地点
-        let target;
-        if (enemy.userData.state === "chase") {
-          target = camera.position;
-        } else {
-          target = enemy.userData.patrolPoints[enemy.userData.patrolIndex];
-          if (enemy.position.distanceTo(target) < 5) {
-            enemy.userData.patrolIndex = (enemy.userData.patrolIndex + 1) % enemy.userData.patrolPoints.length;
-            target = enemy.userData.patrolPoints[enemy.userData.patrolIndex];
-          }
-        }
-        // 目標方向の単位ベクトル
-        let desired = new THREE.Vector3();
-        desired.subVectors(target, enemy.position);
-        desired.y = 0;
-        let dist = desired.length();
-        if (dist < 0.1) dist = 0.1;
-        desired.normalize();
-        // パラメータ：最大速度・加速度
-        const enemyMaxSpeed = 8;
-        const enemyAcceleration = 20;
-        let desiredVelocity = desired.clone().multiplyScalar(enemyMaxSpeed);
-        let currentVelocity = enemy.userData.velocity;
-        let deltaV = desiredVelocity.clone().sub(currentVelocity);
-        let maxDelta = enemyAcceleration * delta;
-        if (deltaV.length() > maxDelta) { deltaV.setLength(maxDelta); }
-        currentVelocity.add(deltaV);
-        // 衝突チェック付きで移動
-        let tentativePos = enemy.position.clone().add(currentVelocity.clone().multiplyScalar(delta));
-        if (!isColliding(tentativePos, 1)) {
-          enemy.position.copy(tentativePos);
-        } else {
-          let adjusted = false;
-          const angles = [0.3, -0.3, 0.6, -0.6];
-          for (let angle of angles) {
-            let testDir = desired.clone().applyAxisAngle(new THREE.Vector3(0,1,0), angle);
-            let testVelocity = testDir.clone().multiplyScalar(enemyMaxSpeed);
-            let testPos = enemy.position.clone().add(testVelocity.clone().multiplyScalar(delta));
-            if (!isColliding(testPos, 1)) {
-              enemy.userData.velocity.copy(testVelocity);
-              enemy.position.copy(testPos);
-              adjusted = true;
-              break;
-            }
-          }
-          if (!adjusted) {
-            enemy.userData.velocity.multiplyScalar(0.5);
-          }
-        }
-        // 向き調整（移動方向に合わせる）
-        if (enemy.userData.velocity.length() > 0.1) {
-          enemy.rotation.y = Math.atan2(enemy.userData.velocity.x, enemy.userData.velocity.z);
-        }
-        // 追尾中は一定間隔で射撃
-        if (enemy.userData.state === "chase") {
-          enemy.userData.shootTimer += delta;
-          if (enemy.userData.shootTimer > 2) {
-            enemyShootSingle(enemy);
-            enemy.userData.shootTimer = 0;
-          }
-        } else {
-          enemy.userData.shootTimer = 0;
-        }
-      }
-    }
-    
-    /***********************
-     * 敵単体の射撃処理（プレイヤー方向へ）
-     ***********************/
-    function enemyShootSingle(enemy) {
-      const bulletGeo = new THREE.SphereGeometry(0.3, 8, 8);
-      const bulletMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-      let bullet = new THREE.Mesh(bulletGeo, bulletMat);
-      bullet.position.copy(enemy.position);
-      let direction = new THREE.Vector3();
-      direction.subVectors(camera.position, enemy.position).normalize();
-      bullet.userData = { velocity: direction.multiplyScalar(30) };
-      scene.add(bullet);
-      enemyBullets.push(bullet);
     }
 
     /***********************
@@ -542,8 +439,103 @@
     }
 
     /***********************
-     * ミニマップ更新
-     *  平原全体の境界、障害物、プレイヤー（青）、各敵（赤）を描画
+     * CPU（敵）のアップデート
+     *  プレイヤーとの距離が一定以内なら追尾 (chase)、
+     *  それ以外は巡回 (patrol) モードを実行
+     ***********************/
+    function updateEnemy(delta) {
+      if (!enemyAlive) return;
+      let distanceToPlayer = camera.position.clone().sub(enemy.position).length();
+      const chaseDistance = 80;
+      if (distanceToPlayer < chaseDistance) {
+        enemy.userData.state = "chase";
+      } else {
+        enemy.userData.state = "patrol";
+      }
+      
+      let target;
+      if (enemy.userData.state === "chase") {
+        target = camera.position;
+      } else {
+        target = enemy.userData.patrolPoints[ enemy.userData.patrolIndex ];
+        if (enemy.position.distanceTo(target) < 5) {
+          enemy.userData.patrolIndex = (enemy.userData.patrolIndex + 1) % enemy.userData.patrolPoints.length;
+          target = enemy.userData.patrolPoints[ enemy.userData.patrolIndex ];
+        }
+      }
+      
+      let desired = new THREE.Vector3();
+      desired.subVectors(target, enemy.position);
+      desired.y = 0;
+      let dist = desired.length();
+      if (dist < 0.1) { dist = 0.1; }
+      desired.normalize();
+      
+      const enemyMaxSpeed = 8;
+      const enemyAcceleration = 20;
+      let desiredVelocity = desired.clone().multiplyScalar(enemyMaxSpeed);
+      
+      let currentVelocity = enemy.userData.velocity;
+      let deltaV = desiredVelocity.clone().sub(currentVelocity);
+      let maxDelta = enemyAcceleration * delta;
+      if (deltaV.length() > maxDelta) { deltaV.setLength(maxDelta); }
+      currentVelocity.add(deltaV);
+      
+      let tentativePos = enemy.position.clone().add(currentVelocity.clone().multiplyScalar(delta));
+      if (!isColliding(tentativePos, 1)) {
+        enemy.position.copy(tentativePos);
+      } else {
+        let adjusted = false;
+        const angles = [0.3, -0.3, 0.6, -0.6];
+        for (let angle of angles) {
+          let testDir = desired.clone().applyAxisAngle(new THREE.Vector3(0,1,0), angle);
+          let testVelocity = testDir.clone().multiplyScalar(enemyMaxSpeed);
+          let testPos = enemy.position.clone().add(testVelocity.clone().multiplyScalar(delta));
+          if (!isColliding(testPos, 1)) {
+            enemy.userData.velocity.copy(testVelocity);
+            enemy.position.copy(testPos);
+            adjusted = true;
+            break;
+          }
+        }
+        if (!adjusted) {
+          enemy.userData.velocity.multiplyScalar(0.5);
+        }
+      }
+      
+      if (enemy.userData.velocity.length() > 0.1) {
+        enemy.rotation.y = Math.atan2(enemy.userData.velocity.x, enemy.userData.velocity.z);
+      }
+      
+      if (enemy.userData.state === "chase") {
+        enemyShootTimer += delta;
+        if (enemyShootTimer > 2) {
+          enemyShoot();
+          enemyShootTimer = 0;
+        }
+      } else {
+        enemyShootTimer = 0;
+      }
+    }
+
+    /***********************
+     * 敵弾の射撃（プレイヤー方向へ）
+     ***********************/
+    function enemyShoot() {
+      if (!enemyAlive) return;
+      const bulletGeo = new THREE.SphereGeometry(0.3, 8, 8);
+      const bulletMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+      let bullet = new THREE.Mesh(bulletGeo, bulletMat);
+      bullet.position.copy(enemy.position);
+      let direction = new THREE.Vector3();
+      direction.subVectors(camera.position, enemy.position).normalize();
+      bullet.userData = { velocity: direction.multiplyScalar(30) };
+      scene.add(bullet);
+      enemyBullets.push(bullet);
+    }
+
+    /***********************
+     * ミニマップ更新：平原境界、障害物、プレイヤー、敵の位置を描画
      ***********************/
     function updateMinimap() {
       minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
@@ -561,21 +553,20 @@
         let d = obs.userData.depth * scale;
         minimapCtx.fillRect(x - w/2, minimap.height - (z + d/2), w, d);
       }
-      // プレイヤー描画
+      // プレイヤー
       let playerX = (camera.position.x + terrainSize/2) * scale;
       let playerZ = (camera.position.z + terrainSize/2) * scale;
       minimapCtx.fillStyle = '#00f';
       minimapCtx.beginPath();
       minimapCtx.arc(playerX, minimap.height - playerZ, 5, 0, Math.PI * 2);
       minimapCtx.fill();
-      // 各敵描画
-      minimapCtx.fillStyle = '#f00';
-      for (let i = 0; i < enemies.length; i++) {
-        let enemy = enemies[i];
-        let ex = (enemy.position.x + terrainSize/2) * scale;
-        let ez = (enemy.position.z + terrainSize/2) * scale;
+      // 敵
+      if (enemyAlive) {
+        let enemyX = (enemy.position.x + terrainSize/2) * scale;
+        let enemyZ = (enemy.position.z + terrainSize/2) * scale;
+        minimapCtx.fillStyle = '#f00';
         minimapCtx.beginPath();
-        minimapCtx.arc(ex, minimap.height - ez, 5, 0, Math.PI * 2);
+        minimapCtx.arc(enemyX, minimap.height - enemyZ, 5, 0, Math.PI * 2);
         minimapCtx.fill();
       }
     }
@@ -587,7 +578,7 @@
       requestAnimationFrame(animate);
       const delta = clock.getDelta();
       updatePlayer(delta);
-      updateEnemies(delta);
+      updateEnemy(delta);
       updateBullets(delta);
       updateMinimap();
       renderer.render(scene, camera);
