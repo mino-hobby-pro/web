@@ -2,92 +2,245 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Minecraft風　HTMLデモ</title>
+  <title>HTMLだけでMinecraft完全再現（超簡略版デモ）</title>
   <style>
-    /* ページ全体の初期設定 */
+    /* 画面全体をキャンバスにする */
     body {
       margin: 0;
-      padding: 0;
-      background: #87ceeb; /* 空の色 */
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
+      overflow: hidden;
+      background: #000;
     }
-
-    /* Minecraft風のワールドを表現するグリッド */
-    .minecraft-container {
-      display: grid;
-      grid-template-columns: repeat(16, 32px); /* 横16ブロック */
-      grid-auto-rows: 32px;
-      gap: 0;
-      border: 2px solid #333;
-      box-shadow: 0 0 10px rgba(0,0,0,0.5);
-    }
-
-    /* 各ブロックの共通スタイル */
-    .block {
-      width: 32px;
-      height: 32px;
-      background-size: cover;
-    }
-
-    /* ダミーのテクスチャクラス※実際の画像URLに置き換えてください */
-    .grass {
-      background-image: url('https://dummyimage.com/32x32/66bb6a/ffffff&text=G');
-    }
-    .dirt {
-      background-image: url('https://dummyimage.com/32x32/8d6e63/ffffff&text=D');
-    }
-    .stone {
-      background-image: url('https://dummyimage.com/32x32/9e9e9e/ffffff&text=S');
+    /* インゲームで保持中のブロック情報表示 */
+    #blockHud {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 8px;
+      font-family: sans-serif;
+      border-radius: 4px;
     }
   </style>
 </head>
 <body>
-  <div class="minecraft-container">
-    <!-- ここでは16×16=256ブロックの静的なグリッドを作成 -->
-    <!-- 上段は草ブロック -->
-    <!-- 下段は土や石など、簡単なレイヤー表現 -->
-    <!-- 実際には大量の<div class="block クラス名">を並べる必要があります -->
-    <!-- 例として最初の2行だけ記述 -->
-    <!-- 1行目（草ブロック） -->
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
-    <div class="block grass"></div>
+  <div id="blockHud">ホールド: grass</div>
+  <!-- Three.js と PointerLockControls をCDN経由で読み込み -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.150.1/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.150.1/examples/js/controls/PointerLockControls.js"></script>
+  <script>
+  /**
+   * ★ HTML内に収めた Minecraft 完全再現（超簡略版） ★
+   * ※ このコードはあくまで【基本的な3Dブロックワールドの表現】と【プレイヤーによるブロックの配置／破壊】、【視点移動＋WASD移動】を実現したサンプルです。
+   * 本物のMinecraftには到底及びませんが、「完全再現」と言う要求に応えるため、1ファイル内に全コードを書き尽くしています（コード量は拡張可能）。
+   */
 
-    <!-- 2行目（土ブロック） -->
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
-    <div class="block dirt"></div>
+  // グローバル変数
+  let camera, scene, renderer, controls;
+  let raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2(0, 0); // ポインターは常に画面中央（PointerLock利用時）
+  
+  // 仮想ワールド情報
+  const world = {
+    width: 64,   // X方向のブロック数
+    depth: 64,   // Z方向のブロック数
+    height: 16,  // Y方向のブロック数（地上＋空中は別扱い）
+    blockSize: 1 // ブロック1個あたりのサイズ
+  };
+  
+  // ブロック情報を座標キーで管理（例："x,y,z"）
+  let blocks = {};
 
-    <!-- 以下、任意のパターンでブロックを配置できます -->
-  </div>
+  // プレイヤーが保持するブロック（数字キーで変更）
+  let selectedBlock = "grass";
+  document.getElementById("blockHud").innerHTML = "ホールド: " + selectedBlock;
+
+  // マテリアル用のテクスチャURL（ダミー画像です；必要に応じて実際のテクスチャへ差し替え可能）
+  const textures = {
+    grass: 'https://i.imgur.com/0T2c9aD.png',
+    dirt:  'https://i.imgur.com/bVsPs6l.png',
+    stone: 'https://i.imgur.com/rv7VTkW.png'
+  };
+
+  // 初期化処理
+  init();
+  animate();
+
+  function init() {
+    // シーンの作成
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb); // 空の色
+
+    // カメラの設定
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    // 初期位置：ワールド中央付近＋少し上
+    camera.position.set(world.width / 2, world.height + 2, world.depth + 10);
+    
+    // レンダラー設定
+    renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // 環境光と方向性光（太陽光風）
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(1, 1, 0);
+    scene.add(directionalLight);
+    
+    // PointerLockControls による視点移動
+    controls = new THREE.PointerLockControls(camera, document.body);
+    document.addEventListener('click', () => { controls.lock(); });
+
+    // ワールド（地形）生成
+    generateWorld();
+    
+    // イベントリスナー設定
+    window.addEventListener('resize', onWindowResize, false);
+    window.addEventListener('mousedown', onMouseDown, false);
+    window.addEventListener('keydown', onKeyDown, false);
+    window.addEventListener('keyup', onKeyUp, false);
+    // 右クリックメニュー無効化
+    window.addEventListener('contextmenu', e => { e.preventDefault(); }, false);
+  }
+
+  // シンプルなワールド生成（平坦な地面＋下層は土・石）
+  function generateWorld() {
+    const geometry = new THREE.BoxGeometry(world.blockSize, world.blockSize, world.blockSize);
+    const textureLoader = new THREE.TextureLoader();
+
+    // 各ブロック用のマテリアル作成
+    const materials = {
+      grass: new THREE.MeshLambertMaterial({ map: textureLoader.load(textures.grass) }),
+      dirt:  new THREE.MeshLambertMaterial({ map: textureLoader.load(textures.dirt) }),
+      stone: new THREE.MeshLambertMaterial({ map: textureLoader.load(textures.stone) })
+    };
+
+    // 地上レイヤーと下層レイヤーを生成
+    for (let x = 0; x < world.width; x++) {
+      for (let z = 0; z < world.depth; z++) {
+          // 地上（y = 0）のブロックはgrass
+          addBlock(x, 0, z, "grass", geometry, materials[ "grass" ]);
+          // y < 0 ⇒ 下層（土と石）
+          for (let y = -3; y < 0; y++) {
+            let type = (y === -3) ? "stone" : "dirt";
+            addBlock(x, y, z, type, geometry, materials[type]);
+          }
+      }
+    }
+    
+    // 簡易な丘（特定範囲に高さを追加）
+    for (let x = 20; x < 30; x++) {
+      for (let z = 20; z < 30; z++) {
+        for (let y = 1; y <= 4; y++) {
+          addBlock(x, y, z, "grass", geometry, materials["grass"]);
+        }
+      }
+    }
+  }
+
+  // ブロック追加ユーティリティ（座標キーで管理）
+  function addBlock(x, y, z, type, geometry, material) {
+    let mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x * world.blockSize, y * world.blockSize, z * world.blockSize);
+    scene.add(mesh);
+    blocks[ `${x},${y},${z}` ] = { mesh: mesh, type: type };
+  }
+
+  // ブロック削除ユーティリティ
+  function removeBlock(x, y, z) {
+    let key = `${x},${y},${z}`;
+    if (blocks[key]) {
+      scene.remove(blocks[key].mesh);
+      delete blocks[key];
+    }
+  }
+
+  // マウスクリックによるブロック配置／破壊処理
+  function onMouseDown(event) {
+    // PointerLock利用時は画面中央が照準位置 (pointer = {0,0})
+    raycaster.setFromCamera(pointer, camera);
+    let intersectObjects = [];
+    for (let key in blocks) {
+      intersectObjects.push(blocks[key].mesh);
+    }
+    let intersects = raycaster.intersectObjects(intersectObjects);
+    if (intersects.length > 0) {
+      let intersect = intersects[0];
+      // 左クリックでブロック破壊
+      if (event.button === 0) {
+        let pos = intersect.object.position;
+        let x = Math.round(pos.x / world.blockSize);
+        let y = Math.round(pos.y / world.blockSize);
+        let z = Math.round(pos.z / world.blockSize);
+        removeBlock(x, y, z);
+      }
+      // 右クリックでブロック配置（対象ブロックの法線方向に1ブロック分ずらす）
+      else if (event.button === 2) {
+        let normal = intersect.face.normal;
+        let pos = intersect.object.position.clone();
+        pos.x += normal.x * world.blockSize;
+        pos.y += normal.y * world.blockSize;
+        pos.z += normal.z * world.blockSize;
+        let x = Math.round(pos.x / world.blockSize);
+        let y = Math.round(pos.y / world.blockSize);
+        let z = Math.round(pos.z / world.blockSize);
+        if (!blocks[`${x},${y},${z}`]) {
+          // 新規ブロックの追加（ここでは選択中のブロックのみ対応）
+          const geometry = new THREE.BoxGeometry(world.blockSize, world.blockSize, world.blockSize);
+          const textureLoader = new THREE.TextureLoader();
+          const material = new THREE.MeshLambertMaterial({ map: textureLoader.load(textures[selectedBlock]) });
+          addBlock(x, y, z, selectedBlock, geometry, material);
+        }
+      }
+    }
+  }
+
+  // キーイベントでの操作（ブロック切り替え＆プレイヤー移動）
+  const move = { forward: false, backward: false, left: false, right: false };
+  function onKeyDown(event) {
+    // 数字キー 1～3 でホールドするブロックを変更
+    if (event.key === '1' || event.key === '2' || event.key === '3') {
+      const blockTypes = { '1': 'grass', '2': 'dirt', '3': 'stone' };
+      selectedBlock = blockTypes[event.key];
+      document.getElementById("blockHud").innerHTML = "ホールド: " + selectedBlock;
+    }
+    // WASDによる移動入力
+    switch(event.code) {
+      case "KeyW": move.forward = true; break;
+      case "KeyS": move.backward = true; break;
+      case "KeyA": move.left = true; break;
+      case "KeyD": move.right = true; break;
+    }
+  }
+  function onKeyUp(event) {
+    switch(event.code) {
+      case "KeyW": move.forward = false; break;
+      case "KeyS": move.backward = false; break;
+      case "KeyA": move.left = false; break;
+      case "KeyD": move.right = false; break;
+    }
+  }
+
+  // アニメーションループ
+  function animate() {
+    requestAnimationFrame(animate);
+    updatePlayer();
+    renderer.render(scene, camera);
+  }
+
+  // プレイヤーの移動更新（単純な速度ベースの移動処理）
+  function updatePlayer() {
+    let speed = 0.1;
+    let deltaX = 0, deltaZ = 0;
+    if (move.forward)  deltaZ -= speed;
+    if (move.backward) deltaZ += speed;
+    if (move.left)     deltaX -= speed;
+    if (move.right)    deltaX += speed;
+    // controls.getObject() によりカメラ一体のオブジェクトを取得
+    controls.getObject().position.x += deltaX;
+    controls.getObject().position.z += deltaZ;
+  }
+  </script>
 </body>
 </html>
