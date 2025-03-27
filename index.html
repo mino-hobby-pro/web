@@ -1,347 +1,426 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>3D銃撃戦ゲーム</title>
+  <title>3D銃撃戦 vs CPU - Maze Shooter</title>
   <style>
-    body { margin: 0; overflow: hidden; font-family: sans-serif; }
-    #title-screen, #game-over-screen {
+    body { margin: 0; overflow: hidden; }
+    #overlay {
       position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      color: #fff;
       z-index: 100;
     }
-    #title-screen {
-      background-color: #000;
-      color: #fff;
-      font-size: 50px;
-    }
-    #game-over-screen {
-      background: rgba(0, 0, 0, 0.8);
-      color: #fff;
-      font-size: 50px;
-      display: none;
-    }
-    button {
-      font-size: 20px;
-      padding: 10px 20px;
+    #startButton {
       margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 24px;
       cursor: pointer;
     }
+    #instructions { font-size: 24px; text-align: center; }
   </style>
 </head>
 <body>
-  <!-- タイトル画面 -->
-  <div id="title-screen">
-    <div>3D 銃撃戦ゲーム</div>
-    <button id="start-button">Start Game</button>
-  </div>
-  <!-- ゲームオーバー画面 -->
-  <div id="game-over-screen">
-    <div>Game Over</div>
-    <button id="restart-button">Restart Game</button>
+  <!-- タイトル画面（オーバーレイ） -->
+  <div id="overlay">
+    <div id="instructions">
+      <h1>3D銃撃戦 vs CPU</h1>
+      <p>迷宮に挑戦して、CPUを撃破せよ！</p>
+      <p>操作：WASDキーで移動、マウスで視点操作、左クリックで射撃</p>
+    </div>
+    <button id="startButton">スタート</button>
   </div>
 
-  <!-- Three.js の CDN 読み込み -->
+  <!-- Three.js ライブラリ -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script>
-    // グローバル変数宣言
-    let scene, camera, renderer;
-    let player;
-    let enemies = [];
-    let bullets = [];
-    let enemyBullets = [];
-    let clock = new THREE.Clock();
-    const playerSpeed = 0.2;
-    const enemySpeed = 0.05;
-    let keysPressed = {};
-    let gameActive = false;
-    let lastPlayerShot = 0;
-    const playerShootInterval = 0.3; // プレイヤーの射撃間隔（秒）
+  <!-- PointerLockControls (Three.jsに付属のFPS操作用クラス) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/controls/PointerLockControls.js"></script>
 
-    // シーン、カメラ、レンダラー、ライティング、マップなどの初期化
+  <script>
+    ////////////////////////////////////////////////////////////////////////////
+    // グローバル変数宣言
+    let scene, camera, renderer, clock;
+    let controls;
+    let maze, mazeWidth = 21, mazeHeight = 21, cellSize = 10;
+    let wallMeshes = [];  // 衝突判定用に作成した壁オブジェクトを保存
+    let enemy, enemySpeed = 3;
+    let enemyPath = [];
+    let enemyPathIndex = 0;
+    let enemyRecalcTimer = 0;
+    let bullets = [];
+    const moveSpeed = 5;
+    let keys = {KeyW: false, KeyA: false, KeyS: false, KeyD: false};
+
+    ////////////////////////////////////////////////////////////////////////////
+    // 迷宮生成（再帰的バックトラッキング法）
+    function generateMaze(w, h) {
+      // w・h は奇数である前提（外枠は壁）
+      let maze = [];
+      for (let i = 0; i < h; i++) {
+        maze[i] = [];
+        for (let j = 0; j < w; j++) {
+          maze[i][j] = 1; // 1＝壁、0＝通路
+        }
+      }
+      let stack = [];
+      let startX = 1, startY = 1;
+      maze[startY][startX] = 0;
+      stack.push({x: startX, y: startY});
+    
+      while(stack.length > 0) {
+        let current = stack[stack.length - 1];
+        let x = current.x, y = current.y;
+        let neighbours = [];
+        let directions = [
+          {dx: 2, dy: 0},
+          {dx: -2, dy: 0},
+          {dx: 0, dy: 2},
+          {dx: 0, dy: -2}
+        ];
+        // シャッフル
+        for (let i = directions.length - 1; i > 0; i--) {
+          let j = Math.floor(Math.random() * (i + 1));
+          [directions[i], directions[j]] = [directions[j], directions[i]];
+        }
+        directions.forEach(dir => {
+          let nx = x + dir.dx, ny = y + dir.dy;
+          if (ny > 0 && ny < h && nx > 0 && nx < w && maze[ny][nx] === 1) {
+            neighbours.push({x: nx, y: ny, between: {x: x + dir.dx / 2, y: y + dir.dy / 2}});
+          }
+        });
+        if (neighbours.length > 0) {
+          let chosen = neighbours[Math.floor(Math.random() * neighbours.length)];
+          maze[chosen.between.y][chosen.between.x] = 0;
+          maze[chosen.y][chosen.x] = 0;
+          stack.push({x: chosen.x, y: chosen.y});
+        } else {
+          stack.pop();
+        }
+      }
+      return maze;
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // グリッド座標（迷宮セル） ⇔ ワールド座標（3D空間）の相互変換
+    function gridToWorld(x, y) {
+      return new THREE.Vector3(
+        (x - mazeWidth / 2) * cellSize,
+        0,
+        (y - mazeHeight / 2) * cellSize
+      );
+    }
+    function worldToGrid(position) {
+      let gridX = Math.round(position.x / cellSize + mazeWidth / 2);
+      let gridY = Math.round(position.z / cellSize + mazeHeight / 2);
+      return { x: gridX, y: gridY };
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // 初期化処理：シーン、カメラ、レンダラー、コントロール、ライティング、床、迷宮、CPU生成
     function init() {
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xa0a0a0);
-
-      // カメラ設定（第三者視点）
-      camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-      camera.position.set(0, 10, 10);
-      camera.lookAt(0, 0, 0);
-
-      // レンダラー設定
+      scene.background = new THREE.Color(0x000000);
+    
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+      camera.position.set(0, 5, 0);
+    
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
-
-      // 環境光と平行光源
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambientLight);
+    
+      clock = new THREE.Clock();
+    
+      // PointerLockControls により FPS 操作を実現
+      controls = new THREE.PointerLockControls(camera, document.body);
+      scene.add(controls.getObject());
       
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      directionalLight.position.set(10, 20, 0);
-      scene.add(directionalLight);
-
-      // マップ（地面）の作成
-      const groundGeometry = new THREE.PlaneGeometry(100, 100);
-      const groundMaterial = new THREE.MeshPhongMaterial({ color: 0x228822 });
-      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-      ground.rotation.x = -Math.PI / 2;
-      scene.add(ground);
-
-      // キーイベントのリスナ登録
+      // キーボード入力（WASD 操作）
       document.addEventListener('keydown', onKeyDown);
       document.addEventListener('keyup', onKeyUp);
-      window.addEventListener('resize', onWindowResize, false);
+      document.addEventListener('mousedown', onMouseDown);
+    
+      // 環境光＆方向光による照明
+      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+      let dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      dirLight.position.set(1, 10, 1);
+      scene.add(dirLight);
+    
+      // 迷宮生成
+      maze = generateMaze(mazeWidth, mazeHeight);
+      createMaze();
+    
+      // 床（プレイヤーが歩く面）
+      let floorGeometry = new THREE.PlaneGeometry(mazeWidth * cellSize, mazeHeight * cellSize);
+      let floorMaterial = new THREE.MeshPhongMaterial({color: 0x444444});
+      let floor = new THREE.Mesh(floorGeometry, floorMaterial);
+      floor.rotation.x = -Math.PI / 2;
+      scene.add(floor);
+    
+      // CPU（敵）の生成：迷宮の右下付近に配置
+      let enemyGridPos = { x: mazeWidth - 2, y: mazeHeight - 2 };
+      let enemyWorldPos = gridToWorld(enemyGridPos.x, enemyGridPos.y);
+      enemy = new THREE.Mesh(
+        new THREE.BoxGeometry(4, 4, 4),
+        new THREE.MeshPhongMaterial({color: 0xff0000})
+      );
+      enemy.position.set(enemyWorldPos.x, 2, enemyWorldPos.z);
+      scene.add(enemy);
+    
+      // プレイヤーの開始位置は迷宮左上（セル座標 1,1）に設定
+      let playerStart = gridToWorld(1, 1);
+      controls.getObject().position.set(playerStart.x, 5, playerStart.z);
+    
+      window.addEventListener('resize', onWindowResize);
+      animate();
     }
-
-    // ウィンドウリサイズ時の処理
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // 迷宮の壁を grid 情報から作成（各セルが 1 なら BoxGeometry）
+    function createMaze() {
+      let wallGeometry = new THREE.BoxGeometry(cellSize, 10, cellSize);
+      let wallMaterial = new THREE.MeshPhongMaterial({color: 0x888888});
+    
+      for (let y = 0; y < mazeHeight; y++) {
+        for (let x = 0; x < mazeWidth; x++) {
+          if (maze[y][x] === 1) {
+            let wall = new THREE.Mesh(wallGeometry, wallMaterial);
+            let pos = gridToWorld(x, y);
+            wall.position.set(pos.x, 5, pos.z);
+            scene.add(wall);
+            wallMeshes.push(wall);
+          }
+        }
+      }
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // リサイズ時の処理
     function onWindowResize() {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     }
-
-    // キー押下処理
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // キーボード入力イベント
     function onKeyDown(event) {
-      keysPressed[event.key.toLowerCase()] = true;
-      
-      // スペースキーでプレイヤー射撃（クールダウン付き）
-      if (event.code === "Space") {
-        let currentTime = clock.getElapsedTime();
-        if (currentTime - lastPlayerShot > playerShootInterval) {
-          spawnPlayerBullet();
-          lastPlayerShot = currentTime;
-        }
-      }
+      if (keys[event.code] !== undefined) { keys[event.code] = true; }
     }
-
-    // キー離上処理
     function onKeyUp(event) {
-      keysPressed[event.key.toLowerCase()] = false;
+      if (keys[event.code] !== undefined) { keys[event.code] = false; }
     }
-
-    // ゲーム開始時の初期化（プレイヤー、敵、弾をリセット）
-    function startGame() {
-      // タイトル画面およびゲームオーバー画面の非表示
-      document.getElementById("title-screen").style.display = "none";
-      document.getElementById("game-over-screen").style.display = "none";
-      gameActive = true;
-      
-      // 既存の弾および敵のクリア
-      bullets.forEach(bullet => scene.remove(bullet));
-      enemyBullets.forEach(bullet => scene.remove(bullet));
-      bullets = [];
-      enemyBullets = [];
-      enemies.forEach(enemy => scene.remove(enemy.mesh));
-      enemies = [];
-
-      // プレイヤー作成（緑のキューブ）
-      if (player) scene.remove(player);
-      const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
-      const playerMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
-      player = new THREE.Mesh(playerGeometry, playerMaterial);
-      player.position.set(0, 0.5, 0);
-      scene.add(player);
-
-      // CPU 敵作成（赤のキューブ） – ここでは 5 体生成
-      const enemyCount = 5;
-      for (let i = 0; i < enemyCount; i++) {
-        const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const enemyMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
-        const enemyMesh = new THREE.Mesh(enemyGeometry, enemyMaterial);
-        // プレイヤーから一定距離（10～30）離れたランダムな位置へ配置
-        const angle = Math.random() * Math.PI * 2;
-        const distance = 10 + Math.random() * 20;
-        enemyMesh.position.set(Math.cos(angle) * distance, 0.5, Math.sin(angle) * distance);
-        scene.add(enemyMesh);
-        enemies.push({
-          mesh: enemyMesh,
-          lastShot: 0,
-          shootInterval: 2 + Math.random() * 3 // 2～5秒ごとに射撃
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // マウスクリックで射撃（左クリック）
+    function onMouseDown(event) {
+      if (event.button === 0) shootBullet();
+    }
+    
+    // 射撃機能：カメラ位置からマウスの向きに向けて小さな弾（黄色い球体）を発射
+    function shootBullet() {
+      let bulletGeometry = new THREE.SphereGeometry(0.5, 8, 8);
+      let bulletMaterial = new THREE.MeshBasicMaterial({color: 0xffff00});
+      let bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+      let startPos = new THREE.Vector3().copy(controls.getObject().position);
+      bullet.position.copy(startPos);
+  
+      // カメラの向いている方向を取得して、そこへ発射
+      let direction = new THREE.Vector3();
+      controls.getDirection(direction).normalize();
+      let bulletSpeed = 20;
+      bullets.push({
+        mesh: bullet,
+        velocity: direction.multiplyScalar(bulletSpeed)
+      });
+      scene.add(bullet);
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // プレイヤー移動更新（WASD 利用＋簡易衝突判定）
+    function updatePlayer(delta) {
+      let moveDirection = new THREE.Vector3();
+      let forward = new THREE.Vector3();
+      let right = new THREE.Vector3();
+  
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      forward.normalize();
+      right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  
+      if (keys["KeyW"]) moveDirection.add(forward);
+      if (keys["KeyS"]) moveDirection.sub(forward);
+      if (keys["KeyA"]) moveDirection.sub(right);
+      if (keys["KeyD"]) moveDirection.add(right);
+  
+      moveDirection.normalize();
+      let displacement = moveDirection.multiplyScalar(moveSpeed * delta);
+      // 衝突判定：新しい位置で壁と重なっていなければ移動
+      if (!checkCollision(controls.getObject().position, displacement)) {
+        controls.getObject().position.add(displacement);
+      }
+    }
+    
+    // 衝突判定（プレイヤーの新位置を仮想球体とし、各壁のバウンディングボックスと比較）
+    function checkCollision(position, displacement) {
+      let newPos = new THREE.Vector3().copy(position).add(displacement);
+      let playerSphere = new THREE.Sphere(newPos, 2);
+      for (let i = 0; i < wallMeshes.length; i++) {
+        let box = new THREE.Box3().setFromObject(wallMeshes[i]);
+        if (box.intersectsSphere(playerSphere)) return true;
+      }
+      return false;
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // A*アルゴリズムによる経路探索（グリッド上の経路を求める）
+    function astar(start, goal, maze) {
+      let openSet = [];
+      let cameFrom = {};
+      let gScore = {};
+      let fScore = {};
+    
+      function key(node) { return node.x + "," + node.y; }
+      function heuristic(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
+    
+      openSet.push(start);
+      gScore[key(start)] = 0;
+      fScore[key(start)] = heuristic(start, goal);
+    
+      while (openSet.length > 0) {
+        // 現在のノード：fScore の最小値を持つノードを選択
+        let current = openSet.reduce((prev, curr) => {
+          return fScore[key(curr)] < fScore[key(prev)] ? curr : prev;
         });
-      }
-    }
-
-    // プレイヤーの弾を生成
-    function spawnPlayerBullet() {
-      const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
-      const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-      const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
-      bullet.position.copy(player.position);
-      scene.add(bullet);
-      // プレイヤーが向いている前方方向へ弾を進行（回転情報を活用）
-      let forward = new THREE.Vector3(0, 0, -1);
-      forward.applyQuaternion(player.quaternion);
-      bullet.userData.velocity = forward.multiplyScalar(0.7);
-      bullets.push(bullet);
-    }
-
-    // 敵の弾を生成（プレイヤーを狙う）
-    function spawnEnemyBullet(enemy) {
-      const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
-      const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-      const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
-      bullet.position.copy(enemy.mesh.position);
-      scene.add(bullet);
-      // 敵→プレイヤーへの方向ベクトルを算出
-      const direction = new THREE.Vector3().subVectors(player.position, enemy.mesh.position).normalize();
-      bullet.userData.velocity = direction.multiplyScalar(0.5);
-      enemyBullets.push(bullet);
-    }
-
-    // 簡易的な衝突判定（2 つのオブジェクトの距離が閾値未満なら衝突とみなす）
-    function detectCollision(obj1, obj2, threshold) {
-      return obj1.position.distanceTo(obj2.position) < threshold;
-    }
-
-    // ゲーム内の各要素（プレイヤー、敵、弾、カメラ）の更新処理
-    function updateGame(delta) {
-      // --- プレイヤー移動（WASD 操作） ---
-      const move = new THREE.Vector3();
-      if (keysPressed['w']) move.z -= 1;
-      if (keysPressed['s']) move.z += 1;
-      if (keysPressed['a']) move.x -= 1;
-      if (keysPressed['d']) move.x += 1;
-      if (move.length() > 0) {
-        move.normalize();
-        player.position.addScaledVector(move, playerSpeed);
-        // 移動方向に合わせてプレイヤーの向きを調整（Z 軸を基準に）
-        player.rotation.y = Math.atan2(move.x, move.z);
-      }
-
-      // --- カメラ追従（第三者視点） ---
-      const cameraOffset = new THREE.Vector3(0, 7, 7);
-      camera.position.copy(player.position).add(cameraOffset);
-      camera.lookAt(player.position);
-
-      // --- プレイヤーの弾の更新 ---
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const bullet = bullets[i];
-        bullet.position.add(bullet.userData.velocity);
-        // 一定範囲外に出た弾は除去
-        if (Math.abs(bullet.position.x) > 50 || Math.abs(bullet.position.z) > 50) {
-          scene.remove(bullet);
-          bullets.splice(i, 1);
-        } else {
-          // 弾と敵との衝突チェック
-          for (let j = enemies.length - 1; j >= 0; j--) {
-            if (detectCollision(bullet, enemies[j].mesh, 0.5)) {
-              // 衝突したら敵および弾を除去
-              scene.remove(enemies[j].mesh);
-              enemies.splice(j, 1);
-              scene.remove(bullet);
-              bullets.splice(i, 1);
-              break;
+    
+        if (current.x === goal.x && current.y === goal.y) {
+          // 経路を再構築
+          let path = [];
+          let curKey = key(current);
+          while (cameFrom[curKey] !== undefined) {
+            path.push(current);
+            current = cameFrom[curKey];
+            curKey = key(current);
+          }
+          path.push(start);
+          path.reverse();
+          return path;
+        }
+    
+        openSet = openSet.filter(n => n.x !== current.x || n.y !== current.y);
+    
+        let neighbors = [];
+        let directions = [
+          {x: 1, y: 0},
+          {x: -1, y: 0},
+          {x: 0, y: 1},
+          {x: 0, y: -1}
+        ];
+        directions.forEach(dir => {
+          let neighbor = {x: current.x + dir.x, y: current.y + dir.y};
+          if (neighbor.x >= 0 && neighbor.x < mazeWidth &&
+              neighbor.y >= 0 && neighbor.y < mazeHeight &&
+              maze[neighbor.y][neighbor.x] === 0) {
+            neighbors.push(neighbor);
+          }
+        });
+    
+        neighbors.forEach(neighbor => {
+          let tentative_gScore = gScore[key(current)] + 1;
+          if (tentative_gScore < (gScore[key(neighbor)] || Infinity)) {
+            cameFrom[key(neighbor)] = current;
+            gScore[key(neighbor)] = tentative_gScore;
+            fScore[key(neighbor)] = tentative_gScore + heuristic(neighbor, goal);
+            if (!openSet.some(n => n.x === neighbor.x && n.y === neighbor.y)) {
+              openSet.push(neighbor);
             }
           }
-        }
+        });
       }
-
-      // --- 敵の弾の更新 ---
-      for (let i = enemyBullets.length - 1; i >= 0; i--) {
-        const bullet = enemyBullets[i];
-        bullet.position.add(bullet.userData.velocity);
-        // 範囲外なら除去
-        if (Math.abs(bullet.position.x) > 50 || Math.abs(bullet.position.z) > 50) {
-          scene.remove(bullet);
-          enemyBullets.splice(i, 1);
+      return [];  // 経路が見つからなかった場合
+    }
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // CPU（敵）の移動更新：1秒ごとに A* 経路を再計算し、得られたノード順に移動
+    function updateEnemy(delta) {
+      enemyRecalcTimer += delta;
+      if (enemyRecalcTimer > 1) { // 1秒ごとに経路探索
+        enemyRecalcTimer = 0;
+        let enemyGrid = worldToGrid(enemy.position);
+        let playerGrid = worldToGrid(controls.getObject().position);
+        enemyPath = astar({x: enemyGrid.x, y: enemyGrid.y}, {x: playerGrid.x, y: playerGrid.y}, maze);
+        enemyPathIndex = 0;
+      }
+    
+      if (enemyPath && enemyPath.length > 0 && enemyPathIndex < enemyPath.length) {
+        let targetCell = enemyPath[enemyPathIndex];
+        let targetPos = gridToWorld(targetCell.x, targetCell.y);
+        targetPos.y = enemy.position.y; // 高さは一定
+        let direction = new THREE.Vector3().subVectors(targetPos, enemy.position);
+        let distance = direction.length();
+        if (distance < 0.5) {
+          enemyPathIndex++;
         } else {
-          // 弾とプレイヤーの衝突判定
-          if (detectCollision(bullet, player, 0.5)) {
-            gameOver();
-          }
+          direction.normalize();
+          enemy.position.add(direction.multiplyScalar(enemySpeed * delta));
         }
       }
-
-      // --- 敵の移動と射撃 ---
-      const currentTime = clock.getElapsedTime();
-      enemies.forEach(enemy => {
-        // プレイヤーに向かって移動（一定距離より近ければ停止）
-        const direction = new THREE.Vector3().subVectors(player.position, enemy.mesh.position);
-        const distance = direction.length();
-        direction.normalize();
-        if (distance > 3) {
-          enemy.mesh.position.addScaledVector(direction, enemySpeed);
-        }
-        // プレイヤーの方向へ向く
-        enemy.mesh.rotation.y = Math.atan2(direction.x, direction.z);
-        // 一定間隔で敵が射撃
-        if (currentTime - enemy.lastShot > enemy.shootInterval) {
-          spawnEnemyBullet(enemy);
-          enemy.lastShot = currentTime;
-        }
-      });
+      
+      // プレイヤーとの接近判定（一定距離に入ったらゲームオーバー）
+      let distanceToPlayer = enemy.position.distanceTo(controls.getObject().position);
+      if(distanceToPlayer < 3){
+        alert("ゲームオーバー！CPUに捕まった！");
+        window.location.reload();
+      }
     }
-
-    // プレイヤーに弾が当たったらゲームオーバー
-    function gameOver() {
-      gameActive = false;
-      document.getElementById("game-over-screen").style.display = "flex";
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // 弾の更新処理：各フレームで発射弾を移動・衝突判定
+    function updateBullets(delta) {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        let bulletData = bullets[i];
+        bulletData.mesh.position.add(bulletData.velocity.clone().multiplyScalar(delta));
+        // 範囲外なら削除
+        if (bulletData.mesh.position.length() > 500) {
+          scene.remove(bulletData.mesh);
+          bullets.splice(i, 1);
+          continue;
+        }
+        // 敵との衝突判定（単純な距離判定）
+        if (bulletData.mesh.position.distanceTo(enemy.position) < 3) {
+          scene.remove(enemy);
+          enemy = null;
+          scene.remove(bulletData.mesh);
+          bullets.splice(i, 1);
+          console.log("Enemy eliminated!");
+          // 必要に応じて、ここで新たな敵の出現やゲームクリア処理を追加可能
+        }
+      }
     }
-
-    // レンダリング・ループ
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // メインアニメーションループ
     function animate() {
       requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      if (gameActive) {
-        updateGame(delta);
-      }
+      let delta = clock.getDelta();
+      updatePlayer(delta);
+      if (enemy) updateEnemy(delta);
+      updateBullets(delta);
       renderer.render(scene, camera);
     }
-
-    // ゲームリセット（Restart ボタン用）
-    function resetGame() {
-      // 弾・敵・プレイヤーオブジェクトの除去と再生成
-      bullets.forEach(bullet => scene.remove(bullet));
-      enemyBullets.forEach(bullet => scene.remove(bullet));
-      bullets = [];
-      enemyBullets = [];
-      enemies.forEach(enemy => scene.remove(enemy.mesh));
-      enemies = [];
-      if (player) scene.remove(player);
-      startGame();
-    }
-
-    // ボタンのクリックイベント登録
-    document.getElementById("start-button").addEventListener("click", startGame);
-    document.getElementById("restart-button").addEventListener("click", resetGame);
-
-    // 初期化とアニメーション開始
-    init();
-    animate();
-
-    /*
-      ┌─────────────────────────────────────────┐
-      │             ゲーム開始処理              │
-      └─────────────────────────────────────────┘
-                │
-                ▼
-      [init() でシーン・カメラ・ライティング・地面を作成]
-                │
-                ▼
-      [タイトル画面表示 → Start Game ボタン押下]
-                │
-                ▼
-      [startGame() でプレイヤー、敵、弾を初期化]
-                │
-                ▼
-      ┌──────────────────────────┐
-      │   アニメーションループ   │◄────────┐
-      └──────────────────────────┘         │
-                │                         │
-                ▼                         │
-      [updateGame() により各オブジェクト更新] │
-                │                         │
-                ▼                         │
-       [レンダラーがシーンを描画]            │
-                │                         │
-                ▼                         │
-      [衝突判定→ Game Over なら画面遷移] ─────┘
-    */
+    
+    ////////////////////////////////////////////////////////////////////////////
+    // 「スタート」ボタン押下でオーバーレイを非表示にし、ポインター・ロックを開始、初期化
+    document.getElementById('startButton').addEventListener('click', function() {
+      document.getElementById('overlay').style.display = 'none';
+      controls.lock();
+      init();
+    });
   </script>
 </body>
 </html>
