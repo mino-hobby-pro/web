@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #video-container {
+            flex: 1; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            background-color: #000;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            display: none;
+            text-align: center;
+        }
+        .loader {
+            border: 8px solid #f3f3f3; 
+            border-top: 8px solid #3498db; 
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        nav {
+            background-color: #333;
+            color: white;
+            padding: 15px;
+            text-align: center;
+        }
+        nav button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            border: none;
+            background-color: #555;
+            color: white;
+            cursor: pointer;
+        }
+        nav button:hover {
+            background-color: #777;
+        }
+    </style>
+</head>
+<body>
+
+<div id="video-container">
+    <div id="loading">
+        <div class="loader"></div>
+        Loading...
+    </div>
+    <iframe id="video-frame" src="" allowfullscreen></iframe>
+</div>
+
+<nav>
+    <span style="color: white; margin-right: 10px;">SERVER:</span>
+    <button onclick="loadVideo('nocookie')">Youtube-Nocookie</button>
+    <button onclick="loadVideo('dl-yvideo')">DL-Yvideo</button>
+    <button onclick="loadVideo('youtube')">Youtube</button>
+    <button onclick="loadVideo('high-stream')">High-Stream-Yvideo</button> <!-- New button added -->
+</nav>
+
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = window.location.pathname.split('/').pop();
+
+    loadVideo('nocookie');
+
+    function loadVideo(type) {
+        let src = '';
+        const loadingElement = document.getElementById('loading');
+        const videoFrame = document.getElementById('video-frame');
+
+        loadingElement.style.display = 'block';
+        videoFrame.src = '';
+
+        if (type === 'nocookie') {
+            src = `https://www.youtube-nocookie.com/embed/${videoId}`;
+        } else if (type === 'dl-yvideo') {
+            fetch(`/video/stream/${videoId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.stream_url) {
+                        src = data.stream_url;
+                    } else {
+                        alert('Stream URL not found');
+                    }
+                    videoFrame.src = src;
+                })
+                .catch(error => {
+                    console.error('Error fetching stream URL:', error);
+                    alert('Error fetching stream URL');
+                })
+                .finally(() => {
+                    loadingElement.style.display = 'none';
+                });
+            return;
+        } else if (type === 'youtube') {
+            src = `https://www.youtube.com/embed/${videoId}`;
+        } else if (type === 'high-stream') { // New case for high stream
+            fetch(`/high-stream/${videoId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.highstream_url) {
+                        src = data.highstream_url;
+                    } else {
+                        alert('High stream URL not found');
+                    }
+                    videoFrame.src = src;
+                })
+                .catch(error => {
+                    console.error('Error fetching high stream URL:', error);
+                    alert('Error fetching high stream URL');
+                })
+                .finally(() => {
+                    loadingElement.style.display = 'none';
+                });
+            return;
+        }
+
+        videoFrame.src = src;
+        loadingElement.style.display = 'none';
+    }
+
+    document.getElementById('video-frame').onload = function() {
+        document.getElementById('loading').style.display = 'none';
+    };
+</script>
+
+</body>
+</html>
