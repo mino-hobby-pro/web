@@ -1,0 +1,13 @@
+{
+  "name": "MIN-Tube",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-fetch": "^2.7.0",
+    "ytdl-core": "^4.11.5"
+  }
+}

@@ -1,0 +1,115 @@
+@charset "UTF-8";
+
+html {
+  scroll-padding-top: 50px;
+}
+
+/* 余分なpadding除去 */
+.gsc-control-cse {
+  padding: 0!important;
+}
+
+/* 余分なmargin除去 */
+.gsc-search-box {
+  margin: 0!important;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 500;
+}
+
+div#player {
+  box-sizing: border-box;
+  width: 90%;
+  height: 50.625vw;
+  max-width: 160vh;
+  max-height: 90%;
+  position: relative;
+  z-index: 999;
+}
+
+.modal-close {
+  font-size: 25px;
+  line-height: 1em;
+  display: block;
+  background: transparent;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.25);
+  border: 0;
+  position: absolute;
+  top: -27px;
+  right: 0;
+  color: #FFF;
+  cursor: pointer;
+}
+
+iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  aspect-ratio: 16 / 9;
+  position: absolute; /* 追加: iframeの位置を固定 */
+  top: 0; /* 追加: 上部に配置 */
+  left: 0; /* 追加: 左部に配置 */
+}
+
+#modal-player {
+  display: none;
+}
+
+#modal-player.is-open {
+  display: block;
+}
+
+div#search {
+  color: #000000;
+  color-scheme: light;
+}
+
+/* div#search内の項目をすべてwidth:100% */
+div#search > * {
+  width: 100%;
+}
+
+div#search-box {
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 2px 2px rgba(0, 0, 0, 0.25);
+  position: sticky;
+  top: 10px;
+  z-index: 250;
+  box-sizing: border-box;
+}
+
+#links {
+  font-size: 14px;
+}
+
+div#search-results {
+  margin-top: 5px;
+}
+
+.gssb_c {
+  color: #000;
+}
+
+/* 小表示 */
+@media screen and (max-width: 480px) {
+  div#player {
+    padding: 0;
+    width: 100%;
+    height: 56.25vw;
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  iframe {
+    height: 56.25vw;
+  }
+}

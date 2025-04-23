@@ -1,0 +1,52 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>MIN-Tube</title>
+<meta name="description" content="youtube-nocookie by mino">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#212121">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" type="text/css" href="css/simple.css">
+<link rel="stylesheet" type="text/css" href="css/watchwithcse_v7.css">
+<script src="js/micromodal.min.mod.js"></script>
+<script src="https://www.youtube.com/iframe_api" async id="yt-if-api"></script>
+<script src="js/selectsvc_v7.js"></script>
+<style>
+  body {
+    background-color: white; 
+  }
+</style>
+</head>
+<body>
+  <div id="search">
+    <div id="search-box">
+      <script async src="https://cse.google.com/cse.js?cx=c04ec9d20c4264b0d">
+      </script>
+      <div class="gcse-searchbox"></div>
+    </div>
+    <div id="search-results">
+      <div class="gcse-searchresults"></div>
+    </div>
+  </div>
+  <hr>
+  <div id="links">
+    <a href="/api">CheckAPI</a>
+    <a href="/os">　お知らせ</a>
+    <a href="/about">　詳細</a>
+  </div>
+
+  <div id="modal-player" aria-hidden="true">
+    <div class="modal-overlay" tabindex="-1">
+      <div id="player" role="dialog" aria-modal="true">
+        <button class="modal-close" aria-label="close" data-micromodal-close>✕</button>
+        <iframe src="" allowFullscreen></iframe>
+      </div>
+    </div>
+  </div>
+  <script>
+      MicroModal.init();
+  </script>
+</body>
+</html>
